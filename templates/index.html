@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetProbe - Domain Intelligence Toolkit</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1><span class="logo-icon">&#9784;</span> NetProbe</h1>
+            <p class="subtitle">Domain Intelligence Toolkit</p>
+        </div>
+    </header>
+
+    <main>
+        <section class="search-section">
+            <div class="search-box">
+                <input type="text" id="domainInput" placeholder="Enter domain name (e.g. example.com)" autocomplete="off">
+                <button id="scanBtn" onclick="startScan()">Scan</button>
+            </div>
+            <div class="check-options">
+                <label><input type="checkbox" value="all" checked onchange="toggleAll(this)"> All Checks</label>
+                <label><input type="checkbox" value="whois" class="check-item"> WHOIS</label>
+                <label><input type="checkbox" value="dns" class="check-item"> DNS</label>
+                <label><input type="checkbox" value="dnssec" class="check-item"> DNSSEC</label>
+                <label><input type="checkbox" value="spf" class="check-item"> SPF</label>
+                <label><input type="checkbox" value="dmarc" class="check-item"> DMARC</label>
+                <label><input type="checkbox" value="dkim" class="check-item"> DKIM</label>
+                <label><input type="checkbox" value="mta_sts" class="check-item"> MTA-STS</label>
+                <label><input type="checkbox" value="tlsrpt" class="check-item"> TLS-RPT</label>
+                <label><input type="checkbox" value="ssl" class="check-item"> SSL/TLS</label>
+                <label><input type="checkbox" value="http_headers" class="check-item"> Headers</label>
+                <label><input type="checkbox" value="https_redirect" class="check-item"> HTTPS</label>
+                <label><input type="checkbox" value="ipv6" class="check-item"> IPv6</label>
+                <label><input type="checkbox" value="blacklist" class="check-item"> Blacklist</label>
+                <label><input type="checkbox" value="ports" class="check-item"> Ports</label>
+            </div>
+        </section>
+
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>Scanning <span id="loadingDomain"></span>...</p>
+        </div>
+
+        <div id="results" class="hidden">
+            <div class="results-header">
+                <h2>Results for <span id="resultDomain"></span></h2>
+                <span id="resultTimestamp" class="timestamp"></span>
+            </div>
+
+            <!-- Score Overview -->
+            <section id="scoreOverview" class="card score-card hidden">
+                <h3>Security Overview</h3>
+                <div class="score-grid" id="scoreGrid"></div>
+            </section>
+
+            <!-- Tabs -->
+            <div class="tabs" id="tabs">
+                <button class="tab active" data-tab="whois">WHOIS</button>
+                <button class="tab" data-tab="dns">DNS</button>
+                <button class="tab" data-tab="email">E-mail Security</button>
+                <button class="tab" data-tab="ssl">SSL/TLS</button>
+                <button class="tab" data-tab="web">Web Security</button>
+                <button class="tab" data-tab="network">Network</button>
+            </div>
+
+            <!-- WHOIS Tab -->
+            <div class="tab-content active" id="tab-whois">
+                <div class="card">
+                    <h3>WHOIS Information</h3>
+                    <div id="whoisContent"></div>
+                </div>
+            </div>
+
+            <!-- DNS Tab -->
+            <div class="tab-content" id="tab-dns">
+                <div class="card">
+                    <h3>DNS Records</h3>
+                    <div id="dnsContent"></div>
+                </div>
+                <div class="card">
+                    <h3>DNSSEC</h3>
+                    <div id="dnssecContent"></div>
+                </div>
+            </div>
+
+            <!-- Email Security Tab -->
+            <div class="tab-content" id="tab-email">
+                <div class="card">
+                    <h3>SPF (Sender Policy Framework)</h3>
+                    <div id="spfContent"></div>
+                </div>
+                <div class="card">
+                    <h3>DMARC (Domain-based Message Authentication)</h3>
+                    <div id="dmarcContent"></div>
+                </div>
+                <div class="card">
+                    <h3>DKIM (DomainKeys Identified Mail)</h3>
+                    <div id="dkimContent"></div>
+                </div>
+                <div class="card">
+                    <h3>MTA-STS (Mail Transfer Agent Strict Transport Security)</h3>
+                    <div id="mtaStsContent"></div>
+                </div>
+                <div class="card">
+                    <h3>TLS-RPT (TLS Reporting)</h3>
+                    <div id="tlsrptContent"></div>
+                </div>
+            </div>
+
+            <!-- SSL Tab -->
+            <div class="tab-content" id="tab-ssl">
+                <div class="card">
+                    <h3>SSL/TLS Certificate</h3>
+                    <div id="sslContent"></div>
+                </div>
+            </div>
+
+            <!-- Web Security Tab -->
+            <div class="tab-content" id="tab-web">
+                <div class="card">
+                    <h3>HTTPS Redirect</h3>
+                    <div id="httpsContent"></div>
+                </div>
+                <div class="card">
+                    <h3>HTTP Security Headers</h3>
+                    <div id="headersContent"></div>
+                </div>
+            </div>
+
+            <!-- Network Tab -->
+            <div class="tab-content" id="tab-network">
+                <div class="card">
+                    <h3>IPv6 Support</h3>
+                    <div id="ipv6Content"></div>
+                </div>
+                <div class="card">
+                    <h3>Blacklist Check (DNSBL)</h3>
+                    <div id="blacklistContent"></div>
+                </div>
+                <div class="card">
+                    <h3>Open Ports</h3>
+                    <div id="portsContent"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>NetProbe &mdash; Domain Intelligence Toolkit</p>
+    </footer>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
