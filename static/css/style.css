@@ -374,6 +374,156 @@ main {
     color: var(--text-muted);
 }
 
+/* ===== TLS Grade ===== */
+.tls-grade-section {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+.tls-grade-circle {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    font-weight: 800;
+    flex-shrink: 0;
+    border: 3px solid;
+}
+
+.grade-aplus, .grade-a {
+    color: var(--green);
+    border-color: var(--green);
+    background: rgba(52, 211, 153, 0.08);
+}
+
+.grade-b {
+    color: #a3e635;
+    border-color: #a3e635;
+    background: rgba(163, 230, 53, 0.08);
+}
+
+.grade-c {
+    color: var(--orange);
+    border-color: var(--orange);
+    background: rgba(251, 191, 36, 0.08);
+}
+
+.grade-d {
+    color: #fb923c;
+    border-color: #fb923c;
+    background: rgba(251, 146, 60, 0.08);
+}
+
+.grade-f, .grade-t {
+    color: var(--red);
+    border-color: var(--red);
+    background: rgba(248, 113, 113, 0.08);
+}
+
+.tls-grade-details h3 {
+    margin-bottom: 0.5rem;
+}
+
+.tls-warning {
+    font-size: 0.85rem;
+    padding: 0.15rem 0;
+}
+
+/* ===== Protocol Grid ===== */
+.proto-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.5rem;
+}
+
+.proto-item {
+    padding: 0.65rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+}
+
+.proto-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 0.15rem;
+}
+
+.proto-status {
+    font-size: 0.8rem;
+}
+
+.proto-cipher {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.2rem;
+    font-family: monospace;
+}
+
+.proto-pass {
+    border-color: rgba(52, 211, 153, 0.35);
+}
+.proto-pass .proto-status { color: var(--green); }
+
+.proto-warn {
+    border-color: rgba(251, 191, 36, 0.35);
+}
+.proto-warn .proto-status { color: var(--orange); }
+
+.proto-good-disabled {
+    border-color: rgba(52, 211, 153, 0.2);
+}
+.proto-good-disabled .proto-status { color: var(--green); }
+.proto-good-disabled .proto-name { color: var(--text-muted); }
+
+.proto-fail {
+    border-color: rgba(248, 113, 113, 0.25);
+}
+.proto-fail .proto-status { color: var(--red); }
+.proto-fail .proto-name { color: var(--text-muted); }
+
+/* ===== Cipher Summary & Table ===== */
+.cipher-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+}
+
+.cipher-stat {
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+}
+
+.cipher-strong strong { color: var(--green); }
+.cipher-acceptable strong { color: var(--accent); }
+.cipher-weak strong { color: var(--orange); }
+.cipher-insecure strong { color: var(--red); }
+.cipher-fs strong { color: #a78bfa; }
+
+.cipher-table th {
+    width: auto !important;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.cipher-table td {
+    font-size: 0.82rem;
+}
+
+.cipher-table .badge {
+    font-size: 0.72rem;
+    padding: 0.1rem 0.4rem;
+}
+
 /* ===== Port list ===== */
 .port-grid {
     display: grid;

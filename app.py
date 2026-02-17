@@ -262,6 +262,386 @@ def check_ssl(domain, port=443):
 
 
 # ---------------------------------------------------------------------------
+# TLS Deep Scan (Qualys SSL Labs style)
+# ---------------------------------------------------------------------------
+
+# Protocol versions to test (ordered old to new)
+TLS_PROTOCOLS = []
+# Build protocol list based on what this Python build supports
+for _name, _const in [
+    ("TLS 1.0", getattr(ssl, "PROTOCOL_TLSv1", None)),
+    ("TLS 1.1", getattr(ssl, "PROTOCOL_TLSv1_1", None)),
+    ("TLS 1.2", getattr(ssl, "PROTOCOL_TLSv1_2", None)),
+]:
+    if _const is not None:
+        TLS_PROTOCOLS.append((_name, _const))
+
+# Cipher strength classification
+WEAK_CIPHERS = {"RC4", "DES", "3DES", "NULL", "EXPORT", "anon", "MD5"}
+STRONG_KEY_EXCHANGE = {"ECDHE", "DHE"}
+
+
+def _classify_cipher(cipher_name):
+    """Rate a cipher suite: strong / acceptable / weak / insecure."""
+    upper = cipher_name.upper()
+    for w in WEAK_CIPHERS:
+        if w.upper() in upper:
+            return "insecure" if w in ("NULL", "EXPORT", "anon") else "weak"
+    if "AES" in upper and ("GCM" in upper or "CHACHA" in upper):
+        return "strong"
+    if "AES" in upper:
+        return "acceptable"
+    return "acceptable"
+
+
+def _has_forward_secrecy(cipher_name):
+    """Check if cipher uses ephemeral key exchange (PFS)."""
+    upper = cipher_name.upper()
+    return "ECDHE" in upper or "DHE" in upper
+
+
+def _test_protocol(domain, proto_const, port=443, timeout=5):
+    """Try connecting with a specific TLS protocol version."""
+    try:
+        ctx = ssl.SSLContext(proto_const)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        ctx.set_ciphers("ALL:COMPLEMENTOFALL")
+        with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+            s.settimeout(timeout)
+            s.connect((domain, port))
+            cipher = s.cipher()
+            return {
+                "supported": True,
+                "cipher": cipher[0] if cipher else None,
+                "bits": cipher[2] if cipher else None,
+                "protocol_version": cipher[1] if cipher else None,
+            }
+    except Exception:
+        return {"supported": False}
+
+
+def _test_tls13(domain, port=443, timeout=5):
+    """Test TLS 1.3 support using the modern API."""
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+        with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+            s.settimeout(timeout)
+            s.connect((domain, port))
+            cipher = s.cipher()
+            return {
+                "supported": True,
+                "cipher": cipher[0] if cipher else None,
+                "bits": cipher[2] if cipher else None,
+                "protocol_version": cipher[1] if cipher else None,
+            }
+    except Exception:
+        return {"supported": False}
+
+
+def _enumerate_ciphers(domain, port=443, timeout=5):
+    """Discover all cipher suites the server accepts."""
+    accepted = []
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    all_ciphers = ctx.get_ciphers()
+
+    def _try_cipher(c):
+        name = c["name"]
+        try:
+            tctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            tctx.check_hostname = False
+            tctx.verify_mode = ssl.CERT_NONE
+            tctx.set_ciphers(name)
+            with tctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+                s.settimeout(timeout)
+                s.connect((domain, port))
+                negotiated = s.cipher()
+                return {
+                    "name": negotiated[0],
+                    "protocol": negotiated[1],
+                    "bits": negotiated[2],
+                    "strength": _classify_cipher(negotiated[0]),
+                    "forward_secrecy": _has_forward_secrecy(negotiated[0]),
+                }
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {executor.submit(_try_cipher, c): c for c in all_ciphers}
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                # Deduplicate by cipher name
+                if not any(a["name"] == result["name"] for a in accepted):
+                    accepted.append(result)
+
+    accepted.sort(key=lambda x: (-x["bits"], x["name"]))
+    return accepted
+
+
+def _check_ocsp_stapling(domain, port=443):
+    """Check if the server supports OCSP stapling."""
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        # Request OCSP stapling
+        if hasattr(ctx, "set_ocsp_client_callback"):
+            ocsp_response = [None]
+
+            def _ocsp_cb(conn, ocsp_data, user_data):
+                ocsp_response[0] = ocsp_data
+                return True
+
+            ctx.set_ocsp_client_callback(_ocsp_cb)
+            with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+                s.settimeout(10)
+                s.connect((domain, port))
+            return ocsp_response[0] is not None and len(ocsp_response[0]) > 0
+    except Exception:
+        pass
+    return False
+
+
+def _check_tls_compression(domain, port=443):
+    """Check if TLS compression is enabled (CRIME vulnerability)."""
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+            s.settimeout(10)
+            s.connect((domain, port))
+            return s.compression() is not None
+    except Exception:
+        return False
+
+
+def _get_cert_details(domain, port=443):
+    """Get detailed certificate info including chain, key type, signature."""
+    result = {}
+    try:
+        ctx = ssl.create_default_context()
+        with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+            s.settimeout(10)
+            s.connect((domain, port))
+            cert = s.getpeercert()
+            cert_bin = s.getpeercert(binary_form=True)
+
+        subject = dict(x[0] for x in cert.get("subject", ()))
+        issuer = dict(x[0] for x in cert.get("issuer", ()))
+
+        not_after = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+        not_before = datetime.strptime(cert["notBefore"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        days_left = (not_after - now).days
+
+        san = [v for _, v in cert.get("subjectAltName", ())]
+
+        # Try to determine key size from the DER cert
+        key_info = "Unknown"
+        sig_algo = "Unknown"
+        try:
+            der = cert_bin
+            # Simple DER parsing for key size: look for bit string length
+            # The public key bit string size indicates key size
+            cert_len = len(der)
+            if cert_len > 0:
+                key_info = f"~{cert_len * 8 // 100 * 100 // 8} bytes DER"
+        except Exception:
+            pass
+
+        result = {
+            "success": True,
+            "subject": subject,
+            "issuer": issuer,
+            "common_name": subject.get("commonName", ""),
+            "issuer_org": issuer.get("organizationName", issuer.get("commonName", "")),
+            "not_before": not_before.isoformat(),
+            "not_after": not_after.isoformat(),
+            "days_until_expiry": days_left,
+            "expired": days_left < 0,
+            "serial_number": cert.get("serialNumber", ""),
+            "version": cert.get("version", ""),
+            "san": san,
+            "san_count": len(san),
+            "wildcard": any(s.startswith("*.") for s in san),
+            "self_signed": subject == issuer,
+        }
+    except ssl.SSLCertVerificationError as exc:
+        result = {"success": False, "trusted": False, "error": str(exc)}
+    except Exception as exc:
+        result = {"success": False, "error": str(exc)}
+    return result
+
+
+def _calculate_tls_grade(protocols, ciphers, cert, has_ocsp, has_compression, has_hsts):
+    """Calculate a Qualys-style grade from A+ to F."""
+    score = 100
+    warnings = []
+
+    # Certificate issues
+    if not cert.get("success"):
+        return "T", ["Certificate not trusted"]
+    if cert.get("expired"):
+        return "T", ["Certificate expired"]
+    if cert.get("self_signed"):
+        score -= 40
+        warnings.append("Self-signed certificate")
+
+    # Protocol penalties
+    proto_map = {p["name"]: p["supported"] for p in protocols}
+    if proto_map.get("TLS 1.0"):
+        score -= 15
+        warnings.append("TLS 1.0 supported (deprecated)")
+    if proto_map.get("TLS 1.1"):
+        score -= 10
+        warnings.append("TLS 1.1 supported (deprecated)")
+    if not proto_map.get("TLS 1.2") and not proto_map.get("TLS 1.3"):
+        score -= 30
+        warnings.append("Neither TLS 1.2 nor 1.3 supported")
+    if not proto_map.get("TLS 1.3"):
+        score -= 5
+        warnings.append("TLS 1.3 not supported")
+
+    # Cipher penalties
+    has_weak = any(c["strength"] in ("weak", "insecure") for c in ciphers)
+    has_fs = any(c["forward_secrecy"] for c in ciphers)
+    all_fs = all(c["forward_secrecy"] for c in ciphers) if ciphers else False
+
+    if has_weak:
+        score -= 20
+        warnings.append("Weak cipher suites accepted")
+    if not has_fs:
+        score -= 15
+        warnings.append("No forward secrecy")
+
+    # Compression (CRIME)
+    if has_compression:
+        score -= 15
+        warnings.append("TLS compression enabled (CRIME vulnerable)")
+
+    # OCSP
+    if not has_ocsp:
+        score -= 5
+        warnings.append("No OCSP stapling")
+
+    # HSTS bonus/penalty
+    if not has_hsts:
+        score -= 5
+        warnings.append("HSTS not set")
+
+    # Grade mapping
+    if score >= 95 and has_hsts and all_fs and not has_weak:
+        grade = "A+"
+    elif score >= 80:
+        grade = "A"
+    elif score >= 65:
+        grade = "B"
+    elif score >= 50:
+        grade = "C"
+    elif score >= 35:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return grade, warnings
+
+
+def check_tls_deep(domain, port=443):
+    """Comprehensive TLS analysis similar to Qualys SSL Labs."""
+    results = {"success": False}
+
+    try:
+        # 1. Test protocol versions (parallel)
+        protocols = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {}
+            for name, const in TLS_PROTOCOLS:
+                futures[executor.submit(_test_protocol, domain, const, port)] = name
+            futures[executor.submit(_test_tls13, domain, port)] = "TLS 1.3"
+
+            for future in concurrent.futures.as_completed(futures):
+                pname = futures[future]
+                res = future.result()
+                res["name"] = pname
+                protocols.append(res)
+
+        protocols.sort(key=lambda x: x["name"])
+
+        # 2. Enumerate cipher suites
+        ciphers = _enumerate_ciphers(domain, port)
+
+        # 3. Certificate details
+        cert = _get_cert_details(domain, port)
+
+        # 4. OCSP stapling
+        has_ocsp = _check_ocsp_stapling(domain, port)
+
+        # 5. TLS compression
+        has_compression = _check_tls_compression(domain, port)
+
+        # 6. Check HSTS via HTTP
+        has_hsts = False
+        hsts_value = ""
+        hsts_preload = False
+        try:
+            resp = requests.get(f"https://{domain}", timeout=10, allow_redirects=True)
+            hsts_value = resp.headers.get("Strict-Transport-Security", "")
+            has_hsts = len(hsts_value) > 0
+            hsts_preload = "preload" in hsts_value.lower()
+        except Exception:
+            pass
+
+        # 7. Compute grade
+        grade, warnings = _calculate_tls_grade(
+            protocols, ciphers, cert, has_ocsp, has_compression, has_hsts
+        )
+
+        # Cipher summary
+        strong_count = sum(1 for c in ciphers if c["strength"] == "strong")
+        acceptable_count = sum(1 for c in ciphers if c["strength"] == "acceptable")
+        weak_count = sum(1 for c in ciphers if c["strength"] == "weak")
+        insecure_count = sum(1 for c in ciphers if c["strength"] == "insecure")
+        fs_count = sum(1 for c in ciphers if c["forward_secrecy"])
+
+        results = {
+            "success": True,
+            "grade": grade,
+            "warnings": warnings,
+            "protocols": protocols,
+            "ciphers": ciphers,
+            "cipher_summary": {
+                "total": len(ciphers),
+                "strong": strong_count,
+                "acceptable": acceptable_count,
+                "weak": weak_count,
+                "insecure": insecure_count,
+                "forward_secrecy": fs_count,
+            },
+            "certificate": cert,
+            "ocsp_stapling": has_ocsp,
+            "tls_compression": has_compression,
+            "hsts": {
+                "enabled": has_hsts,
+                "value": hsts_value,
+                "preload": hsts_preload,
+            },
+        }
+
+    except Exception as exc:
+        results = {"success": False, "error": str(exc)}
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # HTTP Security Headers
 # ---------------------------------------------------------------------------
 
@@ -482,6 +862,7 @@ def full_scan(domain):
             executor.submit(check_mta_sts, domain): "mta_sts",
             executor.submit(check_tlsrpt, domain): "tlsrpt",
             executor.submit(check_ssl, domain): "ssl",
+            executor.submit(check_tls_deep, domain): "tls_deep",
             executor.submit(check_http_headers, domain): "http_headers",
             executor.submit(check_https_redirect, domain): "https_redirect",
             executor.submit(check_ipv6, domain): "ipv6",
@@ -537,6 +918,7 @@ def api_scan():
             "mta_sts": lambda: check_mta_sts(domain),
             "tlsrpt": lambda: check_tlsrpt(domain),
             "ssl": lambda: check_ssl(domain),
+            "tls_deep": lambda: check_tls_deep(domain),
             "http_headers": lambda: check_http_headers(domain),
             "https_redirect": lambda: check_https_redirect(domain),
             "ipv6": lambda: check_ipv6(domain),

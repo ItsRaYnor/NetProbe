@@ -80,6 +80,7 @@ function renderResults(data) {
     renderMtaSts(data.mta_sts);
     renderTlsrpt(data.tlsrpt);
     renderSsl(data.ssl);
+    renderTlsDeep(data.tls_deep);
     renderHttpsRedirect(data.https_redirect);
     renderHeaders(data.http_headers);
     renderIpv6(data.ipv6);
@@ -105,6 +106,8 @@ function renderScoreOverview(data) {
         { label: 'TLS-RPT', pass: data.tlsrpt?.pass },
         { label: 'HTTPS', pass: data.https_redirect?.pass },
         { label: 'SSL Valid', pass: data.ssl?.success && !data.ssl?.expired },
+        { label: 'TLS Grade', pass: data.tls_deep?.grade && 'A+A'.includes(data.tls_deep.grade), warn: data.tls_deep?.grade === 'B' },
+        { label: 'Fwd Secrecy', pass: data.tls_deep?.cipher_summary?.forward_secrecy > 0 },
         { label: 'Headers', pass: data.http_headers?.score >= 50, warn: data.http_headers?.score >= 25 && data.http_headers?.score < 50 },
         { label: 'IPv6 Web', pass: data.ipv6?.web_pass },
         { label: 'IPv6 Mail', pass: data.ipv6?.mail_pass },
@@ -283,6 +286,122 @@ function renderSsl(data) {
         <tr><th>SAN</th><td>${(data.san || []).map(escapeHtml).join('<br>') || '-'}</td></tr>
     </table>`;
     el.innerHTML = html;
+}
+
+// ===== TLS Deep Scan =====
+function renderTlsDeep(data) {
+    const gradeCard = document.getElementById('tlsGradeCard');
+    const protoEl = document.getElementById('tlsProtocolsContent');
+    const cipherSumEl = document.getElementById('tlsCipherSummary');
+    const cipherEl = document.getElementById('tlsCiphersContent');
+    const featEl = document.getElementById('tlsFeaturesContent');
+
+    if (!data || !data.success) {
+        gradeCard.style.display = 'none';
+        protoEl.innerHTML = `<p class="status status-fail">${data?.error || 'TLS scan not available'}</p>`;
+        cipherSumEl.innerHTML = '';
+        cipherEl.innerHTML = '';
+        featEl.innerHTML = '';
+        return;
+    }
+
+    // --- Grade ---
+    gradeCard.style.display = '';
+    const gradeCircle = document.getElementById('tlsGradeCircle');
+    const grade = data.grade || '?';
+    gradeCircle.textContent = grade;
+    gradeCircle.className = 'tls-grade-circle grade-' + grade.replace('+', 'plus').toLowerCase();
+
+    const warningsEl = document.getElementById('tlsWarnings');
+    if (data.warnings && data.warnings.length > 0) {
+        warningsEl.innerHTML = data.warnings.map(w => `<div class="tls-warning"><span class="status status-warn"></span> ${escapeHtml(w)}</div>`).join('');
+    } else {
+        warningsEl.innerHTML = '<div class="tls-warning"><span class="status status-pass"></span> No issues found</div>';
+    }
+
+    // --- Protocols ---
+    let protoHtml = '<div class="proto-grid">';
+    const protoOrder = ['TLS 1.0', 'TLS 1.1', 'TLS 1.2', 'TLS 1.3'];
+    const deprecated = ['TLS 1.0', 'TLS 1.1'];
+    for (const pname of protoOrder) {
+        const p = (data.protocols || []).find(x => x.name === pname);
+        if (!p) continue;
+        const supported = p.supported;
+        const isOld = deprecated.includes(pname);
+        let cls, statusText;
+        if (supported && isOld) {
+            cls = 'proto-warn';
+            statusText = 'Enabled (deprecated)';
+        } else if (supported) {
+            cls = 'proto-pass';
+            statusText = 'Enabled';
+        } else if (!supported && isOld) {
+            cls = 'proto-good-disabled';
+            statusText = 'Disabled';
+        } else {
+            cls = 'proto-fail';
+            statusText = 'Not supported';
+        }
+        protoHtml += `<div class="proto-item ${cls}">
+            <div class="proto-name">${escapeHtml(pname)}</div>
+            <div class="proto-status">${statusText}</div>
+            ${supported && p.cipher ? `<div class="proto-cipher">${escapeHtml(p.cipher)} (${p.bits} bit)</div>` : ''}
+        </div>`;
+    }
+    protoHtml += '</div>';
+    protoEl.innerHTML = protoHtml;
+
+    // --- Cipher Summary ---
+    const cs = data.cipher_summary || {};
+    cipherSumEl.innerHTML = `<div class="cipher-summary">
+        <span class="cipher-stat"><strong>${cs.total || 0}</strong> total</span>
+        <span class="cipher-stat cipher-strong"><strong>${cs.strong || 0}</strong> strong</span>
+        <span class="cipher-stat cipher-acceptable"><strong>${cs.acceptable || 0}</strong> acceptable</span>
+        <span class="cipher-stat cipher-weak"><strong>${cs.weak || 0}</strong> weak</span>
+        <span class="cipher-stat cipher-insecure"><strong>${cs.insecure || 0}</strong> insecure</span>
+        <span class="cipher-stat cipher-fs"><strong>${cs.forward_secrecy || 0}</strong> PFS</span>
+    </div>`;
+
+    // --- Cipher List ---
+    if (data.ciphers && data.ciphers.length > 0) {
+        let cHtml = '<table class="data-table cipher-table"><thead><tr><th>Cipher Suite</th><th>Protocol</th><th>Bits</th><th>Strength</th><th>PFS</th></tr></thead><tbody>';
+        for (const c of data.ciphers) {
+            const strengthCls = c.strength === 'strong' ? 'badge-pass' : c.strength === 'acceptable' ? 'badge-info' : c.strength === 'weak' ? 'badge-warn' : 'badge-fail';
+            cHtml += `<tr>
+                <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(c.name)}</td>
+                <td>${escapeHtml(c.protocol)}</td>
+                <td>${c.bits}</td>
+                <td><span class="badge ${strengthCls}">${c.strength}</span></td>
+                <td>${c.forward_secrecy ? '<span class="status status-pass"></span>' : '<span class="status status-fail"></span>'}</td>
+            </tr>`;
+        }
+        cHtml += '</tbody></table>';
+        cipherEl.innerHTML = cHtml;
+    } else {
+        cipherEl.innerHTML = '<p class="status status-fail">No cipher suites detected</p>';
+    }
+
+    // --- Features ---
+    let fHtml = '<table class="data-table">';
+    fHtml += `<tr><th>OCSP Stapling</th><td><span class="status ${data.ocsp_stapling ? 'status-pass' : 'status-fail'}">${data.ocsp_stapling ? 'Enabled' : 'Not enabled'}</span></td></tr>`;
+    fHtml += `<tr><th>TLS Compression</th><td><span class="status ${!data.tls_compression ? 'status-pass' : 'status-fail'}">${data.tls_compression ? 'Enabled (CRIME vulnerable!)' : 'Disabled (safe)'}</span></td></tr>`;
+    if (data.hsts) {
+        fHtml += `<tr><th>HSTS</th><td><span class="status ${data.hsts.enabled ? 'status-pass' : 'status-fail'}">${data.hsts.enabled ? 'Enabled' : 'Not set'}</span></td></tr>`;
+        if (data.hsts.enabled) {
+            fHtml += `<tr><th>HSTS Value</th><td class="record-box" style="margin:0">${escapeHtml(data.hsts.value)}</td></tr>`;
+            fHtml += `<tr><th>HSTS Preload</th><td><span class="status ${data.hsts.preload ? 'status-pass' : 'status-warn'}">${data.hsts.preload ? 'Yes' : 'No'}</span></td></tr>`;
+        }
+    }
+    // Certificate quick facts from deep scan
+    if (data.certificate?.success) {
+        const cert = data.certificate;
+        fHtml += `<tr><th>Certificate</th><td><span class="status ${cert.expired ? 'status-fail' : 'status-pass'}">${cert.expired ? 'EXPIRED' : cert.days_until_expiry + ' days remaining'}</span></td></tr>`;
+        fHtml += `<tr><th>Wildcard</th><td>${cert.wildcard ? 'Yes' : 'No'}</td></tr>`;
+        fHtml += `<tr><th>Self-signed</th><td><span class="status ${cert.self_signed ? 'status-fail' : 'status-pass'}">${cert.self_signed ? 'Yes' : 'No'}</span></td></tr>`;
+        fHtml += `<tr><th>SAN Count</th><td>${cert.san_count}</td></tr>`;
+    }
+    fHtml += '</table>';
+    featEl.innerHTML = fHtml;
 }
 
 // ===== HTTPS Redirect =====

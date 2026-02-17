@@ -31,6 +31,7 @@
                 <label><input type="checkbox" value="mta_sts" class="check-item"> MTA-STS</label>
                 <label><input type="checkbox" value="tlsrpt" class="check-item"> TLS-RPT</label>
                 <label><input type="checkbox" value="ssl" class="check-item"> SSL/TLS</label>
+                <label><input type="checkbox" value="tls_deep" class="check-item"> TLS Scan</label>
                 <label><input type="checkbox" value="http_headers" class="check-item"> Headers</label>
                 <label><input type="checkbox" value="https_redirect" class="check-item"> HTTPS</label>
                 <label><input type="checkbox" value="ipv6" class="check-item"> IPv6</label>
@@ -110,11 +111,42 @@
                 </div>
             </div>
 
-            <!-- SSL Tab -->
+            <!-- SSL / TLS Deep Scan Tab -->
             <div class="tab-content" id="tab-ssl">
+                <!-- Grade -->
+                <div class="card" id="tlsGradeCard" style="display:none">
+                    <div class="tls-grade-section">
+                        <div class="tls-grade-circle" id="tlsGradeCircle">-</div>
+                        <div class="tls-grade-details">
+                            <h3>TLS Security Grade</h3>
+                            <div id="tlsWarnings"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Protocols -->
                 <div class="card">
-                    <h3>SSL/TLS Certificate</h3>
+                    <h3>Protocol Support</h3>
+                    <div id="tlsProtocolsContent"></div>
+                </div>
+
+                <!-- Cipher Suites -->
+                <div class="card">
+                    <h3>Cipher Suites</h3>
+                    <div id="tlsCipherSummary"></div>
+                    <div id="tlsCiphersContent"></div>
+                </div>
+
+                <!-- Certificate -->
+                <div class="card">
+                    <h3>Certificate Details</h3>
                     <div id="sslContent"></div>
+                </div>
+
+                <!-- TLS Features -->
+                <div class="card">
+                    <h3>TLS Features</h3>
+                    <div id="tlsFeaturesContent"></div>
                 </div>
             </div>
 
