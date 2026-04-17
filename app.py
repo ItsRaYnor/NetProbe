@@ -3,11 +3,11 @@ NetProbe - Domain Intelligence Toolkit
 A comprehensive domain lookup and security analysis tool.
 """
 
-import json
+import ipaddress
+import logging
+import re
 import socket
 import ssl
-import struct
-import time
 import concurrent.futures
 from datetime import datetime, timezone
 
@@ -23,6 +23,72 @@ import whois
 from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
+
+log = logging.getLogger("netprobe")
+
+# ---------------------------------------------------------------------------
+# Input Validation
+# ---------------------------------------------------------------------------
+
+_DOMAIN_RE = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$"
+)
+
+_PRIVATE_NETS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def _is_valid_domain(domain):
+    """Validate that input looks like a public domain name."""
+    if not domain or len(domain) > 253:
+        return False
+    return _DOMAIN_RE.match(domain) is not None
+
+
+def _is_private_ip(ip_str):
+    """Return True if the IP is in a private/reserved range."""
+    try:
+        addr = ipaddress.ip_address(ip_str)
+        return any(addr in net for net in _PRIVATE_NETS)
+    except ValueError:
+        return True
+
+
+def _is_valid_ip(ip_str):
+    """Validate that input is a valid IP address."""
+    try:
+        ipaddress.ip_address(ip_str)
+        return True
+    except ValueError:
+        return False
+
+
+def _safe_resolve_ip(domain):
+    """Resolve domain to IP and reject private addresses."""
+    ip = socket.gethostbyname(domain)
+    if _is_private_ip(ip):
+        raise ValueError("Target resolves to a private IP address")
+    return ip
+
+
+def _safe_error(exc):
+    """Return a sanitised error message without leaking internals."""
+    text = str(exc)
+    for word in ("Traceback", "/home/", "/usr/", "File \""):
+        if word in text:
+            return "An internal error occurred"
+    if len(text) > 300:
+        text = text[:300]
+    return text
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -70,7 +136,7 @@ def lookup_whois(domain):
                 data[key] = _clean(val)
         return {"success": True, "data": data}
     except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": _safe_error(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -112,17 +178,15 @@ def lookup_reverse_dns(ip):
 def check_dnssec(domain):
     """Check if DNSSEC is enabled for the domain."""
     try:
-        name = dns.name.from_text(domain)
-        # Look for DNSKEY
+        dns.name.from_text(domain)
         try:
-            dnskeys = dns.resolver.resolve(domain, "DNSKEY")
+            dns.resolver.resolve(domain, "DNSKEY")
             has_dnskey = True
         except Exception:
             has_dnskey = False
 
-        # Look for DS in parent
         try:
-            ds_records = dns.resolver.resolve(domain, "DS")
+            dns.resolver.resolve(domain, "DS")
             has_ds = True
         except Exception:
             has_ds = False
@@ -135,7 +199,7 @@ def check_dnssec(domain):
             "status": "DNSSEC enabled" if signed else "DNSSEC not fully configured",
         }
     except Exception as exc:
-        return {"signed": False, "status": str(exc)}
+        return {"signed": False, "status": _safe_error(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +304,7 @@ def check_ssl(domain, port=443):
         issuer = dict(x[0] for x in cert.get("issuer", ()))
 
         san = []
-        for entry_type, value in cert.get("subjectAltName", ()):
+        for _, value in cert.get("subjectAltName", ()):
             san.append(value)
 
         return {
@@ -258,16 +322,14 @@ def check_ssl(domain, port=443):
             "protocol": cipher[1] if cipher else None,
         }
     except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": _safe_error(exc)}
 
 
 # ---------------------------------------------------------------------------
 # TLS Deep Scan (Qualys SSL Labs style)
 # ---------------------------------------------------------------------------
 
-# Protocol versions to test (ordered old to new)
 TLS_PROTOCOLS = []
-# Build protocol list based on what this Python build supports
 for _name, _const in [
     ("TLS 1.0", getattr(ssl, "PROTOCOL_TLSv1", None)),
     ("TLS 1.1", getattr(ssl, "PROTOCOL_TLSv1_1", None)),
@@ -276,13 +338,10 @@ for _name, _const in [
     if _const is not None:
         TLS_PROTOCOLS.append((_name, _const))
 
-# Cipher strength classification
 WEAK_CIPHERS = {"RC4", "DES", "3DES", "NULL", "EXPORT", "anon", "MD5"}
-STRONG_KEY_EXCHANGE = {"ECDHE", "DHE"}
 
 
 def _classify_cipher(cipher_name):
-    """Rate a cipher suite: strong / acceptable / weak / insecure."""
     upper = cipher_name.upper()
     for w in WEAK_CIPHERS:
         if w.upper() in upper:
@@ -295,13 +354,11 @@ def _classify_cipher(cipher_name):
 
 
 def _has_forward_secrecy(cipher_name):
-    """Check if cipher uses ephemeral key exchange (PFS)."""
     upper = cipher_name.upper()
     return "ECDHE" in upper or "DHE" in upper
 
 
 def _test_protocol(domain, proto_const, port=443, timeout=5):
-    """Try connecting with a specific TLS protocol version."""
     try:
         ctx = ssl.SSLContext(proto_const)
         ctx.check_hostname = False
@@ -322,7 +379,6 @@ def _test_protocol(domain, proto_const, port=443, timeout=5):
 
 
 def _test_tls13(domain, port=443, timeout=5):
-    """Test TLS 1.3 support using the modern API."""
     try:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
@@ -344,7 +400,6 @@ def _test_tls13(domain, port=443, timeout=5):
 
 
 def _enumerate_ciphers(domain, port=443, timeout=5):
-    """Discover all cipher suites the server accepts."""
     accepted = []
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
@@ -372,26 +427,22 @@ def _enumerate_ciphers(domain, port=443, timeout=5):
         except Exception:
             return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(_try_cipher, c): c for c in all_ciphers}
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
-            if result:
-                # Deduplicate by cipher name
-                if not any(a["name"] == result["name"] for a in accepted):
-                    accepted.append(result)
+            if result and not any(a["name"] == result["name"] for a in accepted):
+                accepted.append(result)
 
     accepted.sort(key=lambda x: (-x["bits"], x["name"]))
     return accepted
 
 
 def _check_ocsp_stapling(domain, port=443):
-    """Check if the server supports OCSP stapling."""
     try:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        # Request OCSP stapling
         if hasattr(ctx, "set_ocsp_client_callback"):
             ocsp_response = [None]
 
@@ -410,7 +461,6 @@ def _check_ocsp_stapling(domain, port=443):
 
 
 def _check_tls_compression(domain, port=443):
-    """Check if TLS compression is enabled (CRIME vulnerability)."""
     try:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
@@ -424,7 +474,6 @@ def _check_tls_compression(domain, port=443):
 
 
 def _get_cert_details(domain, port=443):
-    """Get detailed certificate info including chain, key type, signature."""
     result = {}
     try:
         ctx = ssl.create_default_context()
@@ -432,7 +481,6 @@ def _get_cert_details(domain, port=443):
             s.settimeout(10)
             s.connect((domain, port))
             cert = s.getpeercert()
-            cert_bin = s.getpeercert(binary_form=True)
 
         subject = dict(x[0] for x in cert.get("subject", ()))
         issuer = dict(x[0] for x in cert.get("issuer", ()))
@@ -443,19 +491,6 @@ def _get_cert_details(domain, port=443):
         days_left = (not_after - now).days
 
         san = [v for _, v in cert.get("subjectAltName", ())]
-
-        # Try to determine key size from the DER cert
-        key_info = "Unknown"
-        sig_algo = "Unknown"
-        try:
-            der = cert_bin
-            # Simple DER parsing for key size: look for bit string length
-            # The public key bit string size indicates key size
-            cert_len = len(der)
-            if cert_len > 0:
-                key_info = f"~{cert_len * 8 // 100 * 100 // 8} bytes DER"
-        except Exception:
-            pass
 
         result = {
             "success": True,
@@ -475,18 +510,16 @@ def _get_cert_details(domain, port=443):
             "self_signed": subject == issuer,
         }
     except ssl.SSLCertVerificationError as exc:
-        result = {"success": False, "trusted": False, "error": str(exc)}
+        result = {"success": False, "trusted": False, "error": _safe_error(exc)}
     except Exception as exc:
-        result = {"success": False, "error": str(exc)}
+        result = {"success": False, "error": _safe_error(exc)}
     return result
 
 
 def _calculate_tls_grade(protocols, ciphers, cert, has_ocsp, has_compression, has_hsts):
-    """Calculate a Qualys-style grade from A+ to F."""
     score = 100
     warnings = []
 
-    # Certificate issues
     if not cert.get("success"):
         return "T", ["Certificate not trusted"]
     if cert.get("expired"):
@@ -495,7 +528,6 @@ def _calculate_tls_grade(protocols, ciphers, cert, has_ocsp, has_compression, ha
         score -= 40
         warnings.append("Self-signed certificate")
 
-    # Protocol penalties
     proto_map = {p["name"]: p["supported"] for p in protocols}
     if proto_map.get("TLS 1.0"):
         score -= 15
@@ -510,7 +542,6 @@ def _calculate_tls_grade(protocols, ciphers, cert, has_ocsp, has_compression, ha
         score -= 5
         warnings.append("TLS 1.3 not supported")
 
-    # Cipher penalties
     has_weak = any(c["strength"] in ("weak", "insecure") for c in ciphers)
     has_fs = any(c["forward_secrecy"] for c in ciphers)
     all_fs = all(c["forward_secrecy"] for c in ciphers) if ciphers else False
@@ -522,22 +553,18 @@ def _calculate_tls_grade(protocols, ciphers, cert, has_ocsp, has_compression, ha
         score -= 15
         warnings.append("No forward secrecy")
 
-    # Compression (CRIME)
     if has_compression:
         score -= 15
         warnings.append("TLS compression enabled (CRIME vulnerable)")
 
-    # OCSP
     if not has_ocsp:
         score -= 5
         warnings.append("No OCSP stapling")
 
-    # HSTS bonus/penalty
     if not has_hsts:
         score -= 5
         warnings.append("HSTS not set")
 
-    # Grade mapping
     if score >= 95 and has_hsts and all_fs and not has_weak:
         grade = "A+"
     elif score >= 80:
@@ -555,11 +582,9 @@ def _calculate_tls_grade(protocols, ciphers, cert, has_ocsp, has_compression, ha
 
 
 def check_tls_deep(domain, port=443):
-    """Comprehensive TLS analysis similar to Qualys SSL Labs."""
     results = {"success": False}
 
     try:
-        # 1. Test protocol versions (parallel)
         protocols = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {}
@@ -574,37 +599,28 @@ def check_tls_deep(domain, port=443):
                 protocols.append(res)
 
         protocols.sort(key=lambda x: x["name"])
-
-        # 2. Enumerate cipher suites
         ciphers = _enumerate_ciphers(domain, port)
-
-        # 3. Certificate details
         cert = _get_cert_details(domain, port)
-
-        # 4. OCSP stapling
         has_ocsp = _check_ocsp_stapling(domain, port)
-
-        # 5. TLS compression
         has_compression = _check_tls_compression(domain, port)
 
-        # 6. Check HSTS via HTTP
         has_hsts = False
         hsts_value = ""
         hsts_preload = False
         try:
-            resp = requests.get(f"https://{domain}", timeout=10, allow_redirects=True)
+            resp = requests.get(
+                f"https://{domain}", timeout=10, allow_redirects=True,
+            )
             hsts_value = resp.headers.get("Strict-Transport-Security", "")
             has_hsts = len(hsts_value) > 0
             hsts_preload = "preload" in hsts_value.lower()
         except Exception:
             pass
 
-        # 7. Compute grade
         grade, warnings = _calculate_tls_grade(
             protocols, ciphers, cert, has_ocsp, has_compression, has_hsts
         )
 
-        # Cipher summary
         strong_count = sum(1 for c in ciphers if c["strength"] == "strong")
         acceptable_count = sum(1 for c in ciphers if c["strength"] == "acceptable")
         weak_count = sum(1 for c in ciphers if c["strength"] == "weak")
@@ -636,7 +652,7 @@ def check_tls_deep(domain, port=443):
         }
 
     except Exception as exc:
-        results = {"success": False, "error": str(exc)}
+        results = {"success": False, "error": _safe_error(exc)}
 
     return results
 
@@ -659,7 +675,6 @@ SECURITY_HEADERS = [
 ]
 
 def check_http_headers(domain):
-    """Check HTTP security headers."""
     results = {"headers_found": {}, "headers_missing": [], "score": 0}
     try:
         resp = requests.get(f"https://{domain}", timeout=10, allow_redirects=True)
@@ -679,7 +694,7 @@ def check_http_headers(domain):
         results["success"] = True
     except Exception as exc:
         results["success"] = False
-        results["error"] = str(exc)
+        results["error"] = _safe_error(exc)
     return results
 
 
@@ -688,7 +703,6 @@ def check_http_headers(domain):
 # ---------------------------------------------------------------------------
 
 def check_https_redirect(domain):
-    """Check if HTTP redirects to HTTPS."""
     try:
         resp = requests.get(f"http://{domain}", timeout=10, allow_redirects=False)
         redirects_to_https = (
@@ -703,7 +717,7 @@ def check_https_redirect(domain):
             "pass": redirects_to_https,
         }
     except Exception as exc:
-        return {"redirects": False, "pass": False, "error": str(exc)}
+        return {"redirects": False, "pass": False, "error": _safe_error(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -711,9 +725,7 @@ def check_https_redirect(domain):
 # ---------------------------------------------------------------------------
 
 def check_ipv6(domain):
-    """Check if the domain has AAAA records (IPv6)."""
     aaaa = _resolve(domain, "AAAA")
-    # Also check if the mail servers have IPv6
     mx_records = _resolve(domain, "MX")
     mx_ipv6 = {}
     for mx in mx_records:
@@ -722,7 +734,6 @@ def check_ipv6(domain):
         if mx_aaaa:
             mx_ipv6[mx_host] = mx_aaaa
 
-    # Check nameserver IPv6
     ns_records = _resolve(domain, "NS")
     ns_ipv6 = {}
     for ns in ns_records:
@@ -758,10 +769,9 @@ DNSBL_SERVERS = [
 ]
 
 def check_blacklist(domain):
-    """Check if the domain's IP is on common DNS blacklists."""
     results = {"listed": [], "clean": [], "ip": None}
     try:
-        ip = socket.gethostbyname(domain)
+        ip = _safe_resolve_ip(domain)
         results["ip"] = ip
         reversed_ip = ".".join(reversed(ip.split(".")))
 
@@ -777,7 +787,7 @@ def check_blacklist(domain):
 
         results["is_listed"] = len(results["listed"]) > 0
     except Exception as exc:
-        results["error"] = str(exc)
+        results["error"] = _safe_error(exc)
         results["is_listed"] = False
     return results
 
@@ -807,7 +817,6 @@ COMMON_PORTS = {
 }
 
 def _check_port(ip, port, timeout=3):
-    """Check if a single port is open."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(timeout)
@@ -818,13 +827,12 @@ def _check_port(ip, port, timeout=3):
 
 
 def check_ports(domain):
-    """Scan common ports on the domain."""
     results = {"open": [], "closed": [], "ip": None}
     try:
-        ip = socket.gethostbyname(domain)
+        ip = _safe_resolve_ip(domain)
         results["ip"] = ip
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=17) as executor:
             future_to_port = {
                 executor.submit(_check_port, ip, port): port
                 for port in COMMON_PORTS
@@ -839,7 +847,7 @@ def check_ports(domain):
         results["open"].sort(key=lambda x: x["port"])
         results["closed"].sort(key=lambda x: x["port"])
     except Exception as exc:
-        results["error"] = str(exc)
+        results["error"] = _safe_error(exc)
     return results
 
 
@@ -848,7 +856,6 @@ def check_ports(domain):
 # ---------------------------------------------------------------------------
 
 def full_scan(domain):
-    """Run all checks and return combined results."""
     results = {}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
@@ -874,9 +881,50 @@ def full_scan(domain):
             try:
                 results[key] = future.result()
             except Exception as exc:
-                results[key] = {"error": str(exc)}
+                results[key] = {"error": _safe_error(exc)}
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Security headers for our own responses
+# ---------------------------------------------------------------------------
+
+@app.after_request
+def _set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "connect-src 'self'"
+    )
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting (simple in-memory)
+# ---------------------------------------------------------------------------
+
+_rate_store = {}
+_RATE_LIMIT = 10
+_RATE_WINDOW = 60
+
+
+def _check_rate_limit(ip):
+    now = datetime.now(timezone.utc).timestamp()
+    if ip not in _rate_store:
+        _rate_store[ip] = []
+    _rate_store[ip] = [t for t in _rate_store[ip] if now - t < _RATE_WINDOW]
+    if len(_rate_store[ip]) >= _RATE_LIMIT:
+        return False
+    _rate_store[ip].append(now)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -890,19 +938,30 @@ def index():
 
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
-    data = request.get_json(force=True)
-    domain = data.get("domain", "").strip().lower()
+    if not _check_rate_limit(request.remote_addr):
+        return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
 
-    # Strip protocol if provided
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid request"}), 400
+
+    domain = data.get("domain", "")
+    if not isinstance(domain, str):
+        return jsonify({"error": "Invalid domain"}), 400
+
+    domain = domain.strip().lower()
     for prefix in ("https://", "http://", "www."):
         if domain.startswith(prefix):
             domain = domain[len(prefix):]
     domain = domain.rstrip("/")
 
-    if not domain:
-        return jsonify({"error": "No domain provided"}), 400
+    if not _is_valid_domain(domain):
+        return jsonify({"error": "Invalid domain name. Use format: example.com"}), 400
 
     checks = data.get("checks", ["all"])
+    if not isinstance(checks, list):
+        return jsonify({"error": "Invalid checks parameter"}), 400
+    checks = [c for c in checks if isinstance(c, str)]
 
     if "all" in checks:
         results = full_scan(domain)
@@ -935,7 +994,7 @@ def api_scan():
                 try:
                     results[key] = future.result()
                 except Exception as exc:
-                    results[key] = {"error": str(exc)}
+                    results[key] = {"error": _safe_error(exc)}
 
     results["domain"] = domain
     results["timestamp"] = datetime.now(timezone.utc).isoformat()
@@ -944,10 +1003,21 @@ def api_scan():
 
 @app.route("/api/reverse-dns", methods=["POST"])
 def api_reverse_dns():
-    data = request.get_json(force=True)
-    ip = data.get("ip", "").strip()
-    if not ip:
-        return jsonify({"error": "No IP provided"}), 400
+    if not _check_rate_limit(request.remote_addr):
+        return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid request"}), 400
+
+    ip = data.get("ip", "")
+    if not isinstance(ip, str):
+        return jsonify({"error": "Invalid IP"}), 400
+    ip = ip.strip()
+
+    if not _is_valid_ip(ip):
+        return jsonify({"error": "Invalid IP address format"}), 400
+
     results = lookup_reverse_dns(ip)
     return jsonify({"ip": ip, "ptr_records": results})
 
@@ -957,4 +1027,4 @@ def api_reverse_dns():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(debug=True, host="127.0.0.1", port=5000)
+    app.run(debug=False, host="127.0.0.1", port=5000)

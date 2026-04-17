@@ -9,19 +9,27 @@
 <body>
     <header>
         <div class="header-content">
-            <h1><span class="logo-icon">&#9784;</span> NetProbe</h1>
-            <p class="subtitle">Domain Intelligence Toolkit</p>
+            <div class="logo-row">
+                <div class="logo-mark">NP</div>
+                <div>
+                    <h1>NetProbe</h1>
+                    <p class="subtitle">Domain Intelligence Toolkit</p>
+                </div>
+            </div>
         </div>
     </header>
 
     <main>
         <section class="search-section">
             <div class="search-box">
-                <input type="text" id="domainInput" placeholder="Enter domain name (e.g. example.com)" autocomplete="off">
-                <button id="scanBtn" onclick="startScan()">Scan</button>
+                <div class="input-wrap">
+                    <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="text" id="domainInput" placeholder="Enter domain name (e.g. example.com)" autocomplete="off" spellcheck="false">
+                </div>
+                <button id="scanBtn">Scan</button>
             </div>
-            <div class="check-options">
-                <label><input type="checkbox" value="all" checked onchange="toggleAll(this)"> All Checks</label>
+            <div class="check-options" id="checkOptions">
+                <label><input type="checkbox" value="all" checked> All Checks</label>
                 <label><input type="checkbox" value="whois" class="check-item"> WHOIS</label>
                 <label><input type="checkbox" value="dns" class="check-item"> DNS</label>
                 <label><input type="checkbox" value="dnssec" class="check-item"> DNSSEC</label>
@@ -40,15 +48,25 @@
             </div>
         </section>
 
+        <!-- Error toast -->
+        <div id="errorToast" class="toast hidden"></div>
+
         <div id="loading" class="loading hidden">
             <div class="spinner"></div>
             <p>Scanning <span id="loadingDomain"></span>...</p>
+            <p class="loading-sub">This may take 15-30 seconds for a full scan</p>
         </div>
 
-        <div id="results" class="hidden">
+        <div id="results" class="hidden fade-in">
             <div class="results-header">
                 <h2>Results for <span id="resultDomain"></span></h2>
-                <span id="resultTimestamp" class="timestamp"></span>
+                <div class="results-actions">
+                    <button class="btn-icon" id="exportBtn" title="Export as JSON">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Export
+                    </button>
+                    <span id="resultTimestamp" class="timestamp"></span>
+                </div>
             </div>
 
             <!-- Score Overview -->
@@ -113,7 +131,6 @@
 
             <!-- SSL / TLS Deep Scan Tab -->
             <div class="tab-content" id="tab-ssl">
-                <!-- Grade -->
                 <div class="card" id="tlsGradeCard" style="display:none">
                     <div class="tls-grade-section">
                         <div class="tls-grade-circle" id="tlsGradeCircle">-</div>
@@ -123,27 +140,19 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- Protocols -->
                 <div class="card">
                     <h3>Protocol Support</h3>
                     <div id="tlsProtocolsContent"></div>
                 </div>
-
-                <!-- Cipher Suites -->
                 <div class="card">
                     <h3>Cipher Suites</h3>
                     <div id="tlsCipherSummary"></div>
                     <div id="tlsCiphersContent"></div>
                 </div>
-
-                <!-- Certificate -->
                 <div class="card">
                     <h3>Certificate Details</h3>
                     <div id="sslContent"></div>
                 </div>
-
-                <!-- TLS Features -->
                 <div class="card">
                     <h3>TLS Features</h3>
                     <div id="tlsFeaturesContent"></div>
