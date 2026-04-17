@@ -777,8 +777,25 @@ DNSBL_SERVERS = [
     "psbl.surriel.com",
 ]
 
+def _dnsbl_is_real_hit(answers):
+    """Return True only for genuine listing responses (127.0.0.x, x<128).
+
+    Spamhaus and some others return 127.255.255.252–255 to signal quota/auth
+    errors, not actual listings.  Treating those as hits causes false positives.
+    """
+    for rdata in answers:
+        txt = rdata.to_text()
+        parts = txt.split(".")
+        if len(parts) == 4 and parts[0] == "127":
+            # 127.255.x.x → error/quota response, not a real listing
+            if parts[1] == "255":
+                return False
+            return True
+    return False
+
+
 def check_blacklist(domain):
-    results = {"listed": [], "clean": [], "ip": None}
+    results = {"listed": [], "clean": [], "errors": [], "ip": None}
     try:
         ip = _safe_resolve_ip(domain)
         results["ip"] = ip
@@ -787,8 +804,12 @@ def check_blacklist(domain):
         for bl in DNSBL_SERVERS:
             query = f"{reversed_ip}.{bl}"
             try:
-                dns.resolver.resolve(query, "A")
-                results["listed"].append(bl)
+                answers = dns.resolver.resolve(query, "A")
+                if _dnsbl_is_real_hit(answers):
+                    results["listed"].append(bl)
+                else:
+                    results["errors"].append(bl)
+                    results["clean"].append(bl)
             except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers):
                 results["clean"].append(bl)
             except Exception:
