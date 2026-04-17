@@ -19,6 +19,9 @@ Domain Intelligence Toolkit — een lokale webtool voor snelle domeinanalyse, ve
 - **Blacklist Check (DNSBL)** — Controle op 8 veelgebruikte DNS blacklists
 - **Port Scanner** — Scan van 17 veelgebruikte poorten (FTP, SSH, SMTP, HTTP, etc.)
 - **Security Score Overview** — Visueel overzicht van alle checks met pass/fail status
+- **Scan historie** — Lokale SQLite-database (geen extra dependencies); bekijk, herlaad of verwijder eerdere scans
+- **Aanbevelingen** — Concrete oplossingen per bevinding met ernstlevel (critical → info) en referenties
+- **Printbaar rapport** — HTML-rapport per scan (`/report/<id>`), te printen of opslaan als PDF via de browser
 
 ## Vereisten
 
@@ -59,15 +62,21 @@ Voer een domeinnaam in (bijv. `example.com`) en klik op **Scan**. Je kunt kiezen
 
 ```
 NetProbe/
-├── app.py                  # Flask backend met alle checks
+├── app.py                  # Flask backend met alle checks + history/report routes
+├── db.py                   # SQLite scan historie (stdlib)
+├── recommendations.py      # Remediatie-adviezen per bevinding
 ├── requirements.txt        # Python dependencies
+├── netprobe.db             # (runtime) SQLite database - wordt aangemaakt bij eerste scan
 ├── templates/
-│   └── index.html          # HTML frontend
+│   ├── index.html          # Dashboard
+│   └── report.html         # Printbaar rapport
 └── static/
     ├── css/
-    │   └── style.css       # Styling (dark theme)
+    │   ├── style.css       # Dashboard styling (dark theme)
+    │   └── report.css      # Rapport styling (print-vriendelijk)
     └── js/
-        └── app.js          # Frontend logica
+        ├── app.js          # Frontend logica
+        └── report.js       # Print-knop voor rapport
 ```
 
 ## Screenshots
@@ -100,6 +109,20 @@ Beschikbare checks: `whois`, `dns`, `dnssec`, `spf`, `dmarc`, `dkim`, `mta_sts`,
   "ip": "8.8.8.8"
 }
 ```
+
+### Scan historie
+
+- `GET /api/history?domain=<optional>&limit=100` — overzicht van opgeslagen scans + statistieken
+- `GET /api/history/<id>` — volledige scanresultaten ophalen
+- `DELETE /api/history/<id>` — één scan verwijderen
+- `DELETE /api/history` — alle historie wissen
+- `GET /api/recommendations/<id>` — aanbevelingen (JSON) voor een opgeslagen scan
+
+Scans worden standaard opgeslagen. Stuur `"save_history": false` in de body van `/api/scan` om dit eenmalig over te slaan.
+
+### Rapportage
+
+- `GET /report/<id>` — een volledig HTML-rapport met findings, ernstscores en remediatie-advies. Print vanuit de browser (Ctrl+P) om als PDF op te slaan.
 
 ## Licentie
 

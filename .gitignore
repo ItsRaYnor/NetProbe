@@ -34,3 +34,9 @@ Desktop.ini
 # Distribution
 *.tar.gz
 *.zip
+
+# NetProbe runtime data
+netprobe.db
+netprobe.db-journal
+netprobe.db-wal
+netprobe.db-shm

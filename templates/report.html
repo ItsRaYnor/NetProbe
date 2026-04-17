@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NetProbe Report - {{ scan.domain }}</title>
+    <link rel="stylesheet" href="/static/css/report.css">
+</head>
+<body>
+    <header class="report-header">
+        <div class="brand">
+            <div class="logo-mark">NP</div>
+            <div>
+                <h1>NetProbe Security Report</h1>
+                <p class="subtitle">Domain Intelligence Assessment</p>
+            </div>
+        </div>
+        <div class="report-meta">
+            <p><strong>Domain:</strong> {{ scan.domain }}</p>
+            <p><strong>Scan date:</strong> {{ scan.created_at }}</p>
+            <p><strong>Scan ID:</strong> #{{ scan.id }}</p>
+        </div>
+    </header>
+
+    <div class="print-toolbar no-print">
+        <button id="printBtn">Print / Save as PDF</button>
+        <a href="/" class="btn-link">Back to dashboard</a>
+    </div>
+    <script src="/static/js/report.js"></script>
+
+    <section class="summary">
+        <h2>Executive summary</h2>
+        <div class="summary-grid">
+            <div class="stat">
+                <div class="stat-value grade grade-{{ (scan.grade or 'N')|lower }}">{{ scan.grade or 'N/A' }}</div>
+                <div class="stat-label">TLS Grade</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ scan.score if scan.score is not none else '-' }}{% if scan.score is not none %}%{% endif %}</div>
+                <div class="stat-label">Headers Score</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value issues">{{ scan.issues_count or 0 }}</div>
+                <div class="stat-label">Total findings</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value sev-critical">{{ counts.critical }}</div>
+                <div class="stat-label">Critical</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value sev-high">{{ counts.high }}</div>
+                <div class="stat-label">High</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value sev-medium">{{ counts.medium }}</div>
+                <div class="stat-label">Medium</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value sev-low">{{ counts.low }}</div>
+                <div class="stat-label">Low</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="recommendations">
+        <h2>Findings &amp; remediation</h2>
+        {% if not recommendations %}
+        <div class="no-issues">
+            <h3>No issues detected</h3>
+            <p>The scan did not flag any known configuration issues. Continue to monitor regularly.</p>
+        </div>
+        {% else %}
+            {% for r in recommendations %}
+            <article class="rec sev-{{ r.severity }}">
+                <div class="rec-head">
+                    <span class="sev-badge sev-{{ r.severity }}">{{ r.severity|upper }}</span>
+                    <span class="rec-category">{{ r.category }}</span>
+                    <h3>{{ r.title }}</h3>
+                </div>
+                <div class="rec-body">
+                    <p class="rec-problem"><strong>Problem:</strong> {{ r.problem }}</p>
+                    <p class="rec-fix"><strong>Fix:</strong> {{ r.fix }}</p>
+                    {% if r.reference %}
+                    <p class="rec-ref"><strong>Reference:</strong> <a href="{{ r.reference }}" rel="noopener noreferrer">{{ r.reference }}</a></p>
+                    {% endif %}
+                </div>
+            </article>
+            {% endfor %}
+        {% endif %}
+    </section>
+
+    <section class="findings">
+        <h2>Scan results</h2>
+
+        {% if results.dns %}
+        <h3>DNS records</h3>
+        <table class="data">
+            <thead><tr><th>Type</th><th>Value</th></tr></thead>
+            <tbody>
+                {% for rtype, dns_recs in (results.dns or {}).items() %}
+                    {% for r in dns_recs %}
+                    <tr><td>{{ rtype }}</td><td class="mono">{{ r }}</td></tr>
+                    {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if results.tls_deep and results.tls_deep.success %}
+        <h3>TLS protocols</h3>
+        <table class="data">
+            <thead><tr><th>Protocol</th><th>Supported</th><th>Cipher</th></tr></thead>
+            <tbody>
+                {% for p in (results.tls_deep.protocols or []) %}
+                <tr>
+                    <td>{{ p.name }}</td>
+                    <td class="{{ 'ok' if p.supported else 'muted' }}">{{ 'Yes' if p.supported else 'No' }}</td>
+                    <td class="mono">{{ p.cipher or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if results.http_headers and results.http_headers.success %}
+        <h3>HTTP security headers</h3>
+        <table class="data">
+            <thead><tr><th>Header</th><th>Status</th><th>Value</th></tr></thead>
+            <tbody>
+                {% for h, v in (results.http_headers.headers_found or {}).items() %}
+                <tr><td>{{ h }}</td><td class="ok">Present</td><td class="mono">{{ v }}</td></tr>
+                {% endfor %}
+                {% for h in (results.http_headers.headers_missing or []) %}
+                <tr><td>{{ h }}</td><td class="bad">Missing</td><td>-</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if results.ports %}
+        <h3>Open ports</h3>
+        {% if results.ports.open %}
+        <table class="data">
+            <thead><tr><th>Port</th><th>Service</th></tr></thead>
+            <tbody>
+                {% for p in (results.ports.open or []) %}
+                <tr><td>{{ p.port }}</td><td>{{ p.service }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No open ports detected in the common range.</p>
+        {% endif %}
+        {% endif %}
+
+        {% if results.blacklist %}
+        <h3>DNSBL check</h3>
+        <p><strong>IP:</strong> {{ results.blacklist.ip or '-' }}</p>
+        {% if results.blacklist.is_listed %}
+        <p class="bad"><strong>Listed on:</strong> {{ (results.blacklist.listed or [])|join(', ') }}</p>
+        {% else %}
+        <p class="ok">IP is clean on all tested DNSBLs.</p>
+        {% endif %}
+        {% endif %}
+    </section>
+
+    <footer class="report-footer">
+        <p>Generated by NetProbe &mdash; {{ scan.created_at }}</p>
+    </footer>
+</body>
+</html>

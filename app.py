@@ -20,9 +20,13 @@ import dns.query
 import dns.zone
 import requests
 import whois
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, abort
+
+import db
+import recommendations
 
 app = Flask(__name__)
+db.init_db()
 
 log = logging.getLogger("netprobe")
 
@@ -1003,7 +1007,85 @@ def api_scan():
 
     results["domain"] = domain
     results["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+    save = data.get("save_history", True)
+    if save:
+        try:
+            scan_id = db.save_scan(domain, results)
+            results["scan_id"] = scan_id
+        except Exception as exc:
+            log.warning("Failed to store scan history: %s", exc)
+
     return jsonify(results)
+
+
+@app.route("/api/history", methods=["GET"])
+def api_history_list():
+    domain_filter = request.args.get("domain", "").strip().lower() or None
+    if domain_filter and not _is_valid_domain(domain_filter):
+        return jsonify({"error": "Invalid domain filter"}), 400
+    try:
+        limit = int(request.args.get("limit", "100"))
+    except ValueError:
+        limit = 100
+    limit = max(1, min(limit, 500))
+
+    scans = db.list_scans(domain=domain_filter, limit=limit)
+    stats = db.history_stats()
+    return jsonify({"scans": scans, "stats": stats})
+
+
+@app.route("/api/history/<int:scan_id>", methods=["GET"])
+def api_history_get(scan_id):
+    record = db.get_scan(scan_id)
+    if not record:
+        return jsonify({"error": "Scan not found"}), 404
+    return jsonify(record)
+
+
+@app.route("/api/history/<int:scan_id>", methods=["DELETE"])
+def api_history_delete(scan_id):
+    if not db.delete_scan(scan_id):
+        return jsonify({"error": "Scan not found"}), 404
+    return jsonify({"deleted": True})
+
+
+@app.route("/api/history", methods=["DELETE"])
+def api_history_clear():
+    db.clear_history()
+    return jsonify({"cleared": True})
+
+
+@app.route("/api/recommendations/<int:scan_id>", methods=["GET"])
+def api_recommendations(scan_id):
+    record = db.get_scan(scan_id)
+    if not record:
+        return jsonify({"error": "Scan not found"}), 404
+    recs = recommendations.generate(record["data"])
+    counts = recommendations.summarize_counts(recs)
+    return jsonify({
+        "scan_id": scan_id,
+        "domain": record["domain"],
+        "created_at": record["created_at"],
+        "recommendations": recs,
+        "counts": counts,
+    })
+
+
+@app.route("/report/<int:scan_id>")
+def report_view(scan_id):
+    record = db.get_scan(scan_id)
+    if not record:
+        abort(404)
+    recs = recommendations.generate(record["data"])
+    counts = recommendations.summarize_counts(recs)
+    return render_template(
+        "report.html",
+        scan=record,
+        results=record["data"],
+        recommendations=recs,
+        counts=counts,
+    )
 
 
 @app.route("/api/reverse-dns", methods=["POST"])

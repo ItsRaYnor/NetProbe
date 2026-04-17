@@ -1,0 +1,210 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+    --bg: #ffffff;
+    --text: #111827;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+    --green: #059669;
+    --red: #dc2626;
+    --orange: #ea580c;
+    --yellow: #d97706;
+    --blue: #2563eb;
+    --sev-critical: #7f1d1d;
+    --sev-high: #b91c1c;
+    --sev-medium: #c2410c;
+    --sev-low: #b45309;
+    --sev-info: #1d4ed8;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.5;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+h1, h2, h3 { color: var(--text); font-weight: 600; }
+h1 { font-size: 1.75rem; }
+h2 { font-size: 1.35rem; margin: 32px 0 14px; border-bottom: 2px solid var(--border); padding-bottom: 6px; }
+h3 { font-size: 1.05rem; margin: 18px 0 10px; }
+
+a { color: var(--accent); word-break: break-all; }
+
+.report-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+    border-bottom: 3px solid var(--text);
+    padding-bottom: 18px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+}
+
+.brand { display: flex; align-items: center; gap: 14px; }
+
+.logo-mark {
+    width: 44px; height: 44px;
+    background: var(--accent);
+    color: white;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 1.15rem;
+}
+
+.subtitle { color: var(--muted); font-size: 0.9rem; }
+
+.report-meta { font-size: 0.9rem; color: var(--muted); text-align: right; }
+.report-meta p { margin: 2px 0; }
+.report-meta strong { color: var(--text); }
+
+.print-toolbar {
+    display: flex; gap: 10px; margin: 0 0 20px; padding: 10px; border-radius: 6px; background: #f3f4f6;
+}
+.print-toolbar button, .print-toolbar .btn-link {
+    padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: white; color: var(--text); font-weight: 500; cursor: pointer;
+    text-decoration: none; font-size: 0.9rem;
+}
+.print-toolbar button:hover { background: var(--accent); color: white; border-color: var(--accent); }
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 14px;
+}
+
+.stat {
+    text-align: center;
+    padding: 14px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #f9fafb;
+}
+.stat-value { font-size: 1.8rem; font-weight: 700; line-height: 1; }
+.stat-label { font-size: 0.75rem; color: var(--muted); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.grade {
+    display: inline-block;
+    width: 52px; height: 52px; line-height: 52px;
+    border-radius: 50%;
+    color: white;
+    font-size: 1.35rem;
+    margin: 0 auto;
+}
+.grade-a, .grade-a\+ { background: var(--green); }
+.grade-b { background: #65a30d; }
+.grade-c { background: var(--yellow); }
+.grade-d { background: var(--orange); }
+.grade-f, .grade-t { background: var(--red); }
+.grade-n { background: var(--muted); }
+
+.sev-critical { color: var(--sev-critical); }
+.sev-high { color: var(--sev-high); }
+.sev-medium { color: var(--sev-medium); }
+.sev-low { color: var(--sev-low); }
+.sev-info { color: var(--sev-info); }
+
+.rec {
+    border: 1px solid var(--border);
+    border-left-width: 5px;
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin: 12px 0;
+    page-break-inside: avoid;
+    background: white;
+}
+.rec.sev-critical { border-left-color: var(--sev-critical); background: #fef2f2; }
+.rec.sev-high { border-left-color: var(--sev-high); background: #fef2f2; }
+.rec.sev-medium { border-left-color: var(--sev-medium); background: #fff7ed; }
+.rec.sev-low { border-left-color: var(--sev-low); background: #fefce8; }
+.rec.sev-info { border-left-color: var(--sev-info); background: #eff6ff; }
+
+.rec-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.rec-head h3 { margin: 0; }
+
+.sev-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: white;
+}
+.sev-badge.sev-critical { background: var(--sev-critical); }
+.sev-badge.sev-high { background: var(--sev-high); }
+.sev-badge.sev-medium { background: var(--sev-medium); }
+.sev-badge.sev-low { background: var(--sev-low); }
+.sev-badge.sev-info { background: var(--sev-info); }
+
+.rec-category {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.rec-body p { margin: 6px 0; font-size: 0.92rem; }
+.rec-problem strong { color: var(--sev-high); }
+.rec-fix strong { color: var(--green); }
+.rec-ref { font-size: 0.85rem; }
+
+.no-issues {
+    padding: 20px;
+    text-align: center;
+    background: #ecfdf5;
+    border: 1px solid var(--green);
+    border-radius: 8px;
+    color: var(--green);
+}
+.no-issues h3 { color: var(--green); margin-bottom: 6px; }
+
+table.data {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin-bottom: 12px;
+    page-break-inside: auto;
+}
+table.data th, table.data td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+}
+table.data th { background: #f3f4f6; font-weight: 600; }
+table.data tr { page-break-inside: avoid; }
+
+.mono { font-family: "SF Mono", Consolas, Monaco, monospace; font-size: 0.82rem; word-break: break-all; }
+.ok { color: var(--green); font-weight: 600; }
+.bad { color: var(--red); font-weight: 600; }
+.muted { color: var(--muted); }
+
+.report-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-align: center;
+}
+
+@media print {
+    .no-print { display: none !important; }
+    body { padding: 0; max-width: 100%; }
+    .rec { box-shadow: none; }
+    a { color: var(--text); text-decoration: none; }
+    h2 { page-break-after: avoid; }
+}
