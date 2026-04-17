@@ -329,14 +329,18 @@ def check_ssl(domain, port=443):
 # TLS Deep Scan (Qualys SSL Labs style)
 # ---------------------------------------------------------------------------
 
-TLS_PROTOCOLS = []
-for _name, _const in [
-    ("TLS 1.0", getattr(ssl, "PROTOCOL_TLSv1", None)),
-    ("TLS 1.1", getattr(ssl, "PROTOCOL_TLSv1_1", None)),
-    ("TLS 1.2", getattr(ssl, "PROTOCOL_TLSv1_2", None)),
-]:
-    if _const is not None:
-        TLS_PROTOCOLS.append((_name, _const))
+# Map legacy protocol names to modern ssl.TLSVersion values.
+# Entries are skipped silently if the version is disabled in the local OpenSSL build.
+_TLS_VERSION_MAP = [
+    ("TLS 1.0", "TLSv1"),
+    ("TLS 1.1", "TLSv1_1"),
+    ("TLS 1.2", "TLSv1_2"),
+]
+TLS_PROTOCOLS = [
+    (name, getattr(ssl.TLSVersion, attr))
+    for name, attr in _TLS_VERSION_MAP
+    if hasattr(ssl.TLSVersion, attr)
+]
 
 WEAK_CIPHERS = {"RC4", "DES", "3DES", "NULL", "EXPORT", "anon", "MD5"}
 
@@ -358,12 +362,13 @@ def _has_forward_secrecy(cipher_name):
     return "ECDHE" in upper or "DHE" in upper
 
 
-def _test_protocol(domain, proto_const, port=443, timeout=5):
+def _test_protocol(domain, tls_version, port=443, timeout=5):
     try:
-        ctx = ssl.SSLContext(proto_const)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        ctx.set_ciphers("ALL:COMPLEMENTOFALL")
+        ctx.minimum_version = tls_version
+        ctx.maximum_version = tls_version
         with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
             s.settimeout(timeout)
             s.connect((domain, port))
