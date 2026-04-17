@@ -5,6 +5,7 @@ A comprehensive domain lookup and security analysis tool.
 
 import ipaddress
 import logging
+import os
 import re
 import socket
 import ssl
@@ -766,8 +767,16 @@ def check_ipv6(domain):
 # DNSBL / Blacklist Check
 # ---------------------------------------------------------------------------
 
-DNSBL_SERVERS = [
-    "zen.spamhaus.org",
+# Spamhaus stopped allowing free DNSBL access via public resolvers (8.8.8.8,
+# 1.1.1.1) in 2022.  Set SPAMHAUS_DQS_KEY to a free DQS key from
+# https://www.spamhaus.com/free-trial/sign-up-for-a-free-data-query-service-account/
+# to re-enable Spamhaus checks.  Without a key, only the non-Spamhaus lists are
+# queried.
+
+_SPAMHAUS_DQS_KEY = os.environ.get("SPAMHAUS_DQS_KEY", "").strip()
+
+# Servers that work without a key
+_DNSBL_OPEN = [
     "bl.spamcop.net",
     "b.barracudacentral.org",
     "dnsbl.sorbs.net",
@@ -777,17 +786,28 @@ DNSBL_SERVERS = [
     "psbl.surriel.com",
 ]
 
+# Spamhaus zones — used only when a DQS key is configured
+_DNSBL_SPAMHAUS_ZONES = ["zen", "dbl", "zrd"]
+
+
+def _build_dnsbl_list():
+    servers = list(_DNSBL_OPEN)
+    if _SPAMHAUS_DQS_KEY:
+        for zone in _DNSBL_SPAMHAUS_ZONES:
+            servers.append(f"{_SPAMHAUS_DQS_KEY}.{zone}.dq.spamhaus.net")
+    return servers
+
+
 def _dnsbl_is_real_hit(answers):
     """Return True only for genuine listing responses (127.0.0.x, x<128).
 
-    Spamhaus and some others return 127.255.255.252–255 to signal quota/auth
+    Spamhaus (and some others) return 127.255.255.252–255 to signal quota/auth
     errors, not actual listings.  Treating those as hits causes false positives.
     """
     for rdata in answers:
         txt = rdata.to_text()
         parts = txt.split(".")
         if len(parts) == 4 and parts[0] == "127":
-            # 127.255.x.x → error/quota response, not a real listing
             if parts[1] == "255":
                 return False
             return True
@@ -795,13 +815,16 @@ def _dnsbl_is_real_hit(answers):
 
 
 def check_blacklist(domain):
-    results = {"listed": [], "clean": [], "errors": [], "ip": None}
+    results = {
+        "listed": [], "clean": [], "errors": [], "ip": None,
+        "spamhaus_dqs": bool(_SPAMHAUS_DQS_KEY),
+    }
     try:
         ip = _safe_resolve_ip(domain)
         results["ip"] = ip
         reversed_ip = ".".join(reversed(ip.split(".")))
 
-        for bl in DNSBL_SERVERS:
+        for bl in _build_dnsbl_list():
             query = f"{reversed_ip}.{bl}"
             try:
                 answers = dns.resolver.resolve(query, "A")

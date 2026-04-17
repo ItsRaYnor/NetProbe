@@ -552,6 +552,10 @@ function renderBlacklist(data) {
     let html = '';
     if (data.ip) html += `<p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:0.75rem">IP: ${escapeHtml(data.ip)}</p>`;
 
+    if (data.spamhaus_dqs === false) {
+        html += `<p class="status status-warn" style="margin-bottom:0.75rem">Spamhaus niet gecheckt — stel <code>SPAMHAUS_DQS_KEY</code> in voor volledige DNSBL-dekking</p>`;
+    }
+
     const cls = data.is_listed ? 'status-fail' : 'status-pass';
     const msg = data.is_listed ? `Listed on ${data.listed.length} blacklist(s)!` : 'Clean - not listed on any blacklist';
     html += `<p class="status ${cls}" style="margin-bottom:0.75rem">${escapeHtml(msg)}</p>`;
